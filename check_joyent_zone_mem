@@ -1,0 +1,58 @@
+#!/bin/bash
+# ========================================================================================
+# Joyent Zone Memory Plugin for Nagios based on jinf utility
+#
+# Wanelo Inc, Apache License.
+#
+# Usage: ./check_joyent_zone_mem  [-w <warn_perc>] [-c <critical_perc>]
+# Eg:    ./check_joyent_zone_mem  -w 60 -c 80   # warning at 60% or higher used, critical at 80%
+# ========================================================================================
+
+# Nagios return codes
+STATE_OK=0
+STATE_WARNING=1
+STATE_CRITICAL=2
+STATE_UNKNOWN=3
+
+WARNING_THRESHOLD=70
+CRITICAL_THRESHOLD=85
+# Parse parameters
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -w | --warning)
+                shift
+                WARNING_THRESHOLD=$1
+                ;;
+        -c | --critical)
+                shift
+                CRITICAL_THRESHOLD=$1
+                ;;
+        *)  echo "Unknown argument: $1"
+            exit $STATE_UNKNOWN
+            ;;
+        esac
+shift
+done
+
+PATH=/opt/local/bin:$PATH
+FREE_MEM=`jinf -p -m | grep free | cut -f '2' -d ':'`
+USED_MEM=`jinf -p -m | grep used | cut -f '2' -d ':'`
+TOTAL_MEM=`jinf -p -m | grep cap | cut -f '2' -d ':'`
+RSS=$(($USED_MEM * 100 / $TOTAL_MEM))
+RSS_FREE=$(($FREE_MEM / (1024 * 1024)))
+NODENAME=`cat /etc/nodename`
+
+function result {
+  DESCRIPTION=$1
+  STATUS=$2
+  echo "RSS $DESCRIPTION : ${NODENAME} ${RSS}% used (${RSS_FREE}Mb free)|rss=${RSS}%;${WARNING_THRESHOLD};${CRITICAL_THRESHOLD}"
+  exit $STATUS
+}
+
+if [ $RSS -ge $WARNING_THRESHOLD ] && [ $RSS -lt $CRITICAL_THRESHOLD ]; then
+  result "WARNING" $STATE_WARNING
+elif [ $RSS -ge $CRITICAL_THRESHOLD ]; then
+  result "CRITICAL" $STATE_CRITICAL
+else
+  result "OK" $STATE_OK
+fi

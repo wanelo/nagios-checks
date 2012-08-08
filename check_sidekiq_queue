@@ -1,0 +1,83 @@
+#!/bin/bash
+# ========================================================================================
+# Sidekiq Queue Size
+#
+# Wanelo Inc, Apache License.
+#
+# Usage: ./check_sidekiq_queue [ -h <host> ] [ -q <default> ] [ <-n mq> ] [ -d <redis-db> ] [-w <warn_perc>] [-c <critical_perc>]
+# Eg:    ./check_sidekiq_queue -w 500 -c 2000   # warning at 500 or higher used, critical at 2000 or higher
+# ========================================================================================
+
+# Nagios return codes
+STATE_OK=0
+STATE_WARNING=1
+STATE_CRITICAL=2
+STATE_UNKNOWN=3
+
+WARNING_THRESHOLD=500
+CRITICAL_THRESHOLD=1000
+QUEUE="default"
+NAMESPACE="mq"
+HOST="127.0.0.1"
+DB=0
+# Parse parameters
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -d | --db)
+                shift
+                DB=$1
+                ;;
+        -h | --hostname)
+                shift
+                HOST=$1
+                ;;
+        -q | --queue)
+                shift
+                QUEUE=$1
+                ;;
+        -n | --namespace)
+                shift
+                NAMESPACE=$1
+                ;;
+        -w | --warning)
+                shift
+                WARNING_THRESHOLD=$1
+                ;;
+        -c | --critical)
+                shift
+                CRITICAL_THRESHOLD=$1
+                ;;
+        *)  echo "Unknown argument: $1"
+            exit $STATE_UNKNOWN
+            ;;
+        esac
+shift
+done
+
+PATH=/opt/local/bin:$PATH
+NODENAME=`cat /etc/nodename`
+
+function result {
+  DESCRIPTION=$1
+  STATUS=$2
+  echo "SIDEKIQ $DESCRIPTION : ${NODENAME} ${QUEUE_SIZE} on ${QUEUE}|sidekiq_queue_${QUEUE}=${QUEUE_SIZE};${WARNING_THRESHOLD};${CRITICAL_THRESHOLD}"
+  exit $STATUS
+}
+
+ERR=/tmp/redis-cli.error.$$
+rm -f $ERR
+QUEUE_SIZE=`redis-cli -h $HOST -n $DB llen $NAMESPACE:queue:$QUEUE 2>$ERR | cut -d " " -f 1`
+
+if [ -s "$ERR" ];  then
+  QUEUE_SIZE=`cat $ERR`
+  rm -f $ERR
+  result "CRITICAL" $STATE_CRITICAL
+fi
+
+if [ $QUEUE_SIZE -ge $WARNING_THRESHOLD ] && [ $QUEUE_SIZE -lt $CRITICAL_THRESHOLD ]; then
+  result "WARNING" $STATE_WARNING
+elif [ $QUEUE_SIZE -ge $CRITICAL_THRESHOLD ]; then
+  result "CRITICAL" $STATE_CRITICAL
+else
+  result "OK" $STATE_OK
+fi
