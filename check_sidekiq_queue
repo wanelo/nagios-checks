@@ -55,7 +55,7 @@ shift
 done
 
 PATH=/opt/local/bin:$PATH
-NODENAME=`cat /etc/nodename`
+NODENAME=$HOSTNAME
 
 function result {
   DESCRIPTION=$1
