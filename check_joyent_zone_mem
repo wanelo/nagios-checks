@@ -1,6 +1,6 @@
 #!/bin/bash
 # ========================================================================================
-# Joyent Zone Memory Plugin for Nagios based on jinf utility
+# Joyent Zone Memory Plugin for Nagios based on jinf/sm-meminfo utility
 #
 # Wanelo Inc, Apache License.
 #
@@ -13,6 +13,12 @@ STATE_OK=0
 STATE_WARNING=1
 STATE_CRITICAL=2
 STATE_UNKNOWN=3
+
+if [ -f "/opt/local/bin/sm-meminfo" ]; then
+  MEM_CMD="sm-meminfo -p rss"
+else
+  MEM_CMD="jinf -p -m"
+fi
 
 WARNING_THRESHOLD=70
 CRITICAL_THRESHOLD=85
@@ -35,9 +41,7 @@ shift
 done
 
 PATH=/opt/local/bin:$PATH
-FREE_MEM=`jinf -p -m | grep free | cut -f '2' -d ':'`
-USED_MEM=`jinf -p -m | grep used | cut -f '2' -d ':'`
-TOTAL_MEM=`jinf -p -m | grep cap | cut -f '2' -d ':'`
+read TOTAL_MEM USED_MEM FREE_MEM <<< $($MEM_CMD | grep mem_ | cut -f 2 -d ':')
 RSS=$(($USED_MEM * 100 / $TOTAL_MEM))
 RSS_FREE=$(($FREE_MEM / (1024 * 1024)))
 NODENAME=`cat /etc/nodename`
