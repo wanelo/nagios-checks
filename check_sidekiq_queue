@@ -4,7 +4,7 @@
 #
 # Wanelo Inc, Apache License.
 #
-# Usage: ./check_sidekiq_queue [ -h <host> ] [ -q <default> ] [ <-n mq> ] [ -d <redis-db> ] [-w <warn_perc>] [-c <critical_perc>]
+# Usage: ./check_sidekiq_queue [ -h <host> ] [ -a <password> ] [ -q <default> ] [ <-n mq> ] [ -d <redis-db> ] [-w <warn_perc>] [-c <critical_perc>]
 # Eg:    ./check_sidekiq_queue -w 500 -c 2000   # warning at 500 or higher used, critical at 2000 or higher
 # ========================================================================================
 
@@ -19,7 +19,9 @@ CRITICAL_THRESHOLD=1000
 QUEUE="default"
 NAMESPACE="mq"
 HOST="127.0.0.1"
+PASS="default"
 DB=0
+
 # Parse parameters
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -42,6 +44,10 @@ while [ $# -gt 0 ]; do
         -w | --warning)
                 shift
                 WARNING_THRESHOLD=$1
+                ;;
+        -a | --password)
+                shift
+                PASS=$1
                 ;;
         -c | --critical)
                 shift
@@ -66,7 +72,7 @@ function result {
 
 ERR=/tmp/redis-cli.error.$$
 rm -f $ERR
-QUEUE_SIZE=`redis-cli -h $HOST -n $DB llen $NAMESPACE:queue:$QUEUE 2>$ERR | cut -d " " -f 1`
+QUEUE_SIZE=`redis-cli -h $HOST -a $PASS -n $DB llen $NAMESPACE:queue:$QUEUE 2>$ERR | cut -d " " -f 1`
 
 if [ -s "$ERR" ];  then
   QUEUE_SIZE=`cat $ERR`
