@@ -17,9 +17,9 @@ STATE_UNKNOWN=3
 WARNING_THRESHOLD=500
 CRITICAL_THRESHOLD=1000
 QUEUE="default"
-NAMESPACE="mq"
+NAMESPACE=""
 HOST="127.0.0.1"
-PASS="default"
+PASS=""
 DB=0
 
 # Parse parameters
@@ -72,7 +72,12 @@ function result {
 
 ERR=/tmp/redis-cli.error.$$
 rm -f $ERR
-QUEUE_SIZE=`redis-cli -h $HOST -a $PASS -n $DB llen $NAMESPACE:queue:$QUEUE 2>$ERR | cut -d " " -f 1`
+
+if [ ! -z "$PASS"  ]; then
+  PASS="-a $PASS"
+fi
+
+QUEUE_SIZE=`redis-cli -h $HOST $PASS -n $DB llen $NAMESPACE:queue:$QUEUE 2>$ERR | cut -d " " -f 1`
 
 if [ -s "$ERR" ];  then
   QUEUE_SIZE=`cat $ERR`
