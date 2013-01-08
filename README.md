@@ -31,5 +31,5 @@ Defaults: localhost, no password, default queue, no namespace, db=0, warning at 
 
 ```
 ./check_sidekiq_queue -h 10.100.1.12 -q activity -w 200 -c 1000
-SIDEKIQ OK : redis-host.prod 0 on default|sidekiq_queue_activity =0;200;1000
+SIDEKIQ OK : redis-host.prod 0 on activity|sidekiq_queue_activity=0;200;1000
 ```
