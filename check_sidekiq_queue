@@ -1,10 +1,10 @@
 #!/bin/bash
 # ========================================================================================
-# Sidekiq Queue Size
+# Sidekiq Queue Size Nagios Check
 #
-# Wanelo Inc, Apache License.
+# (c) Wanelo Inc, Distributed under Apache License
 #
-# Usage: ./check_sidekiq_queue [ -h <host> ] [ -a <password> ] [ -q <default> ] [ <-n mq> ] [ -d <redis-db> ] [-w <warn_perc>] [-c <critical_perc>]
+# Usage: ./check_sidekiq_queue [-h host] [-a password] [-q queue] [-n namespace] [-d db] [-w warn_perc] [-c critical_perc]
 # Eg:    ./check_sidekiq_queue -w 500 -c 2000   # warning at 500 or higher used, critical at 2000 or higher
 # ========================================================================================
 
@@ -77,7 +77,11 @@ if [ ! -z "$PASS"  ]; then
   PASS="-a $PASS"
 fi
 
-QUEUE_SIZE=`redis-cli -h $HOST $PASS -n $DB llen $NAMESPACE:queue:$QUEUE 2>$ERR | cut -d " " -f 1`
+if [ ! -z "$NAMESPACE"  ]; then
+ NAMESPACE="$NAMESPACE:"
+fi
+
+QUEUE_SIZE=`redis-cli -h $HOST $PASS -n $DB llen ${NAMESPACE}queue:$QUEUE 2>$ERR | cut -d " " -f 1`
 
 if [ -s "$ERR" ];  then
   QUEUE_SIZE=`cat $ERR`
