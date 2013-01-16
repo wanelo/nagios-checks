@@ -71,7 +71,7 @@ function result {
 }
 
 ERR=/tmp/redis-cli.error.$$
-rm -f $ERR
+
 
 if [ ! -z "$PASS"  ]; then
   PASS="-a $PASS"
@@ -88,6 +88,7 @@ if [ -s "$ERR" ];  then
   rm -f $ERR
   result "CRITICAL" $STATE_CRITICAL
 fi
+rm -f $ERR
 
 if [ $QUEUE_SIZE -ge $WARNING_THRESHOLD ] && [ $QUEUE_SIZE -lt $CRITICAL_THRESHOLD ]; then
   result "WARNING" $STATE_WARNING
