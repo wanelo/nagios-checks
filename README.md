@@ -39,9 +39,8 @@ check_postgres_replication
 Checks transaction log position on a master PostgreSQL host and a replica and warns if the replica
 is behind by a certain amount of data.
 
-Usage:
 ```
-Usage: ./check_postgres_replication [ -h <host> ] [ -m <master> ] [ -U user ] [ -x <units> ] [-w <warn_bytes>] [-c <critical_bytes>]
+Usage: ./check_postgres_replication [ options ]
    -h   --host       replica host (default 127.0.0.1)
    -m   --master     master fqdn or ip (required)
    -U   --user       database user (default postgres)
