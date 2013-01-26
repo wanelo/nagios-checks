@@ -45,6 +45,9 @@ Usage: ./check_postgres_replication [ options ]
    -m   --master     master fqdn or ip (required)
    -U   --user       database user (default postgres)
    -x   --units      units of measurement to display (KB or MB, default MB)
-   -w   --warning    warning threshold (default 10MB)
-   -c   --critical   critical threshold (default 15MB)
+   -w   --warning    warning threshold in bytes (default 10MB)
+   -c   --critical   critical threshold in bytes (default 15MB)
 ```
+
+Note that `--units` is only used in the response. No math is done to translate `--warning` or `--critical`,
+which should be set as bytes. Thus, a 20MB warning would be set as 20971520.
