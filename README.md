@@ -33,3 +33,19 @@ Defaults: localhost, no password, default queue, no namespace, db=0, warning at 
 ./check_sidekiq_queue -h 10.100.1.12 -q activity -w 200 -c 1000
 SIDEKIQ OK : redis-host.prod 0 on activity|sidekiq_queue_activity=0;200;1000
 ```
+
+check_postgres_replication
+--------------------------
+Checks transaction log position on a master PostgreSQL host and a replica and warns if the replica
+is behind by a certain amount of data.
+
+Usage:
+```
+Usage: ./check_postgres_replication [ -h <host> ] [ -m <master> ] [ -U user ] [ -x <units> ] [-w <warn_bytes>] [-c <critical_bytes>]
+   -h   --host       replica host (default 127.0.0.1)
+   -m   --master     master fqdn or ip (required)
+   -U   --user       database user (default postgres)
+   -x   --units      units of measurement to display (KB or MB, default MB)
+   -w   --warning    warning threshold (default 10MB)
+   -c   --critical   critical threshold (default 15MB)
+```
