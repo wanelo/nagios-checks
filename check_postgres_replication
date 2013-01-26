@@ -1,0 +1,120 @@
+#!/bin/bash
+# ========================================================================================
+# Postgres replication
+#
+# Wanelo Inc, Apache License.
+#
+# Usage: ./check_postgres_replication [ -h <host> ] [ -m <master> ] [ -U user ] [ -x <units> ] [-w <warn_perc>] [-c <critical_perc>]
+#   -h   --host       replica host (default 127.0.0.1)
+#   -m   --master     master fqdn or ip (required)
+#   -U   --user       database user (default postgres)
+#   -x   --units      units of measurement to display (KB or MB, default MB)
+#   -w   --warning    warning threshold (default 10MB)
+#   -c   --critical   critical threshold (default 15MB)
+# ========================================================================================
+
+# Nagios return codes
+STATE_OK=0
+STATE_WARNING=1
+STATE_CRITICAL=2
+STATE_UNKNOWN=3
+
+WARNING_THRESHOLD=10485760
+CRITICAL_THRESHOLD=15728640
+HOST="127.0.0.1"
+USER=postgres
+UNITS=MB
+# Parse parameters
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -h | --host)
+                shift
+                HOST=$1
+                ;;
+        -m | --master)
+                shift
+                MASTER=$1
+                ;;
+        -U | --user)
+                shift
+                USER=$1
+                ;;
+        -x | --units)
+                shift
+                UNITS=$1
+                ;;
+        -w | --warning)
+                shift
+                WARNING_THRESHOLD=$1
+                ;;
+        -c | --critical)
+                shift
+                CRITICAL_THRESHOLD=$1
+                ;;
+        *)  echo "Unknown argument: $1"
+            exit $STATE_UNKNOWN
+            ;;
+        esac
+shift
+done
+
+PATH=/opt/local/bin:$PATH
+NODENAME=`cat /etc/nodename`
+MASTER_SQL="SELECT pg_current_xlog_location()"
+REPLICA_SQL="SELECT pg_last_xlog_replay_location()"
+
+function result {
+  DESCRIPTION=$1
+  STATUS=$2
+  echo "POSTGRES REPLICATION $DESCRIPTION : ${NODENAME} $(diff)$UNITS"
+  exit $STATUS
+}
+
+function check_errors {
+  if [ $1 -ne 0 ]; then
+    echo "POSTGRES REPLICATION CHECK FAILED : $2"
+    exit $STATE_CRITICAL
+  fi
+}
+
+function xlog_to_bytes {
+  logid="${1%%/*}"
+  offset="${1##*/}"
+  echo $((0xFFFFFF * 0x$logid + 0x$offset))
+}
+
+function diff {
+  echo $(( $DIFF / $DIVISOR ))
+}
+
+# Error checking of arguments
+case "$UNITS" in
+    KB)
+        DIVISOR=1024
+        ;;
+    MB)
+        DIVISOR=1048576
+        ;;
+    *)
+        check_errors 1 "Incorrect unit of measurement"
+        ;;
+    esac
+
+# Query master and replica for latest xlog
+MASTER_XLOG=$(psql -U $USER -Atc "$MASTER_SQL" -h $MASTER 2>/dev/null)
+check_errors $? "master check"
+REPLICA_XLOG=$(psql -U $USER -Atc "$REPLICA_SQL" -h $HOST 2>/dev/null)
+check_errors $? "replica check"
+
+# Calculate xlog diff in bytes
+DIFF=$(($(xlog_to_bytes $MASTER_XLOG) - $(xlog_to_bytes $REPLICA_XLOG)))
+
+# Output response
+if [ $DIFF -ge $WARNING_THRESHOLD ] && [ $DIFF -lt $CRITICAL_THRESHOLD ]; then
+  result "WARNING" $STATE_WARNING
+elif [ $DIFF -ge $CRITICAL_THRESHOLD ]; then
+  result "CRITICAL" $STATE_CRITICAL
+else
+  result "OK" $STATE_OK
+fi
+
