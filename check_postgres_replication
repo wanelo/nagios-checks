@@ -1,10 +1,12 @@
 #!/bin/bash
 # ========================================================================================
-# Postgres replication
+# Postgres replication lag nagios check using psql and bash.
 #
-# Wanelo Inc, Apache License.
+# 2013 Wanelo Inc, Apache License.
+# This script expects psql to be in the PATH.
 #
-# Usage: ./check_postgres_replication [ -h <host> ] [ -m <master> ] [ -U user ] [ -x <units> ] [-w <warn_perc>] [-c <critical_perc>]
+# Usage: ./check_postgres_replication [ -h <host> ] [ -m <master> ] [ -U user ] [ -x <units> ]
+#                                      [-w <warn_perc>] [-c <critical_perc>]
 #   -h   --host       replica host (default 127.0.0.1)
 #   -m   --master     master fqdn or ip (required)
 #   -U   --user       database user (default postgres)
@@ -19,8 +21,10 @@ STATE_WARNING=1
 STATE_CRITICAL=2
 STATE_UNKNOWN=3
 
+# set thresholds in bytes
 WARNING_THRESHOLD=10485760
 CRITICAL_THRESHOLD=15728640
+
 HOST="127.0.0.1"
 USER=postgres
 UNITS=MB
@@ -58,34 +62,10 @@ while [ $# -gt 0 ]; do
 shift
 done
 
-PATH=/opt/local/bin:$PATH
-NODENAME=`cat /etc/nodename`
-MASTER_SQL="SELECT pg_current_xlog_location()"
-REPLICA_SQL="SELECT pg_last_xlog_replay_location()"
-
-function result {
-  DESCRIPTION=$1
-  STATUS=$2
-  echo "POSTGRES REPLICATION $DESCRIPTION : ${NODENAME} $(diff)$UNITS"
-  exit $STATUS
-}
-
-function check_errors {
-  if [ $1 -ne 0 ]; then
-    echo "POSTGRES REPLICATION CHECK FAILED : $2"
-    exit $STATE_CRITICAL
-  fi
-}
-
-function xlog_to_bytes {
-  logid="${1%%/*}"
-  offset="${1##*/}"
-  echo $((0xFFFFFF * 0x$logid + 0x$offset))
-}
-
-function diff {
-  echo $(( $DIFF / $DIVISOR ))
-}
+if [ -z "$MASTER" ]; then
+  echo "pass master host in parameters via -m flag"
+  exit 1
+fi
 
 # Error checking of arguments
 case "$UNITS" in
@@ -100,11 +80,60 @@ case "$UNITS" in
         ;;
     esac
 
+
+PATH=/opt/local/bin:$PATH
+NODENAME=`cat /etc/nodename`
+MASTER_SQL="SELECT pg_current_xlog_location()"
+REPLICA_SQL="SELECT pg_last_xlog_replay_location()"
+ERR=/tmp/repl_chec.$$
+
+function result {
+  DESCRIPTION=$1
+  STATUS=$2
+  if [ "$STATUS" -eq "$STATE_CRITICAL" ]; then
+    ERROR=`cat $ERR`
+    MESSAGE="replication check error $ERROR"
+  else
+    DIFF_UNITS=$(diff)
+    MESSAGE="replication lag is ${DIFF_UNITS}$UNITS"
+  fi
+  echo "REPLICATION $DESCRIPTION : ${NODENAME} $MESSAGE|repl=${DIFF};${WARNING_THRESHOLD};${CRITICAL_THRESHOLD}"
+  rm -f $ERR
+  exit $STATUS
+}
+
+function check_errors {
+  if [ $1 -ne 0 ]; then
+    result "CRITICAL" $STATE_CRITICAL
+  fi
+}
+
+function xlog_to_bytes {
+        logid="${1%%/*}"
+        offset="${1##*/}"
+        echo $((0xFFFFFF * 0x$logid + 0x$offset))
+}
+
+function diff {
+  if [ -z "$DIFF" ]; then
+    echo "ERROR: NO DATA AVAILABLE"
+  else
+    echo $(( $DIFF / $DIVISOR ))
+  fi
+}
+
+REPLICA_XLOG=$(psql -U $USER -Atc "$REPLICA_SQL" -h $HOST 2>$ERR)
+check_errors $?
+
+if [ -z "$REPLICA_XLOG" ]; then
+  echo -n "Unable to find replica XLOG replay location" > $ERR
+  result "CRITICAL" $STATE_CRITICAL
+fi
+
 # Query master and replica for latest xlog
-MASTER_XLOG=$(psql -U $USER -Atc "$MASTER_SQL" -h $MASTER 2>/dev/null)
-check_errors $? "master check"
-REPLICA_XLOG=$(psql -U $USER -Atc "$REPLICA_SQL" -h $HOST 2>/dev/null)
-check_errors $? "replica check"
+MASTER_XLOG=$(psql -U $USER -Atc "$MASTER_SQL" -h $MASTER 2>$ERR)
+check_errors $?
+
 
 # Calculate xlog diff in bytes
 DIFF=$(($(xlog_to_bytes $MASTER_XLOG) - $(xlog_to_bytes $REPLICA_XLOG)))
@@ -118,3 +147,4 @@ else
   result "OK" $STATE_OK
 fi
 
+rm -f $ERR
