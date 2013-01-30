@@ -90,8 +90,10 @@ ERR=/tmp/repl_chec.$$
 function result {
   DESCRIPTION=$1
   STATUS=$2
-  if [ "$STATUS" -eq "$STATE_CRITICAL" ]; then
-    ERROR=`cat $ERR`
+
+  ERROR=`cat $ERR 2>/dev/null`
+
+  if [[ "$STATUS" -eq "$STATE_CRITICAL" && ! -z "$ERROR" ]]; then
     MESSAGE="replication check error $ERROR"
   else
     DIFF_UNITS=$(diff)
