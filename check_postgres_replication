@@ -111,9 +111,10 @@ function check_errors {
 }
 
 function xlog_to_bytes {
-        logid="${1%%/*}"
-        offset="${1##*/}"
-        echo $((0xFFFFFF * 0x$logid + 0x$offset))
+  # http://eulerto.blogspot.com/2011/11/understanding-wal-nomenclature.html
+  logid="${1%%/*}"
+  offset="${1##*/}"
+  echo $((0xFF000000 * 0x$logid + 0x$offset))
 }
 
 function diff {
@@ -126,6 +127,7 @@ function diff {
 
 REPLICA_XLOG=$(psql -U $USER -Atc "$REPLICA_SQL" -h $HOST 2>$ERR)
 check_errors $?
+REPLICA_BYTES=$(xlog_to_bytes $REPLICA_XLOG)
 
 if [ -z "$REPLICA_XLOG" ]; then
   echo -n "Unable to find replica XLOG replay location" > $ERR
@@ -135,10 +137,10 @@ fi
 # Query master and replica for latest xlog
 MASTER_XLOG=$(psql -U $USER -Atc "$MASTER_SQL" -h $MASTER 2>$ERR)
 check_errors $?
-
+MASTER_BYTES=$(xlog_to_bytes $MASTER_XLOG)
 
 # Calculate xlog diff in bytes
-DIFF=$(($(xlog_to_bytes $MASTER_XLOG) - $(xlog_to_bytes $REPLICA_XLOG)))
+DIFF=$(($MASTER_BYTES - $REPLICA_BYTES))
 
 # Output response
 if [ $DIFF -ge $WARNING_THRESHOLD ] && [ $DIFF -lt $CRITICAL_THRESHOLD ]; then
