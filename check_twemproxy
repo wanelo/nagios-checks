@@ -1,0 +1,87 @@
+#!/bin/bash
+# ========================================================================================
+# Twemproxy Status Check using JSON status page
+#
+# (c) Wanelo Inc, Distributed under Apache License
+#
+# Usage: ./twemproxy_status [-h host] [-p port]
+#
+# Dependencies: ruby with JSON parser installed.
+# ========================================================================================
+
+# Nagios return codes
+STATE_OK=0
+STATE_WARNING=1
+STATE_CRITICAL=2
+STATE_UNKNOWN=3
+
+HOST=""
+PORT=22222
+DESCRIPTION=""
+PROBLEM=
+
+# Parse parameters
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -h | --host)
+                shift
+                HOST=$1
+                ;;
+        -q | --port)
+                shift
+                PORT=$1
+                ;;
+        *)  echo "Unknown argument: $1"
+            exit $STATE_UNKNOWN
+            ;;
+        esac
+shift
+done
+
+PATH=/opt/local/bin:$PATH
+NODENAME=$HOSTNAME
+
+function result {
+  DESCRIPTION=$1
+  STATUS=$2
+  echo "TWEMPROXY $DESCRIPTION : ${HOST} ${PROBLEM}"
+  exit $STATUS
+}
+
+
+if [ -z "$HOST" ];  then
+  echo "ERROR: host is required"
+  exit 1
+fi
+
+
+OUTPUT=`nc $HOST $PORT | ruby -e '
+  require "json"
+  hash = JSON.parse(STDIN.read)
+  errors = {}
+  error_clusters = {}
+  hash.keys.find_all{|k| hash[k].is_a?(Hash)}.each do |cluster|
+    hash[cluster].keys.find_all{|v| hash[cluster][v].is_a?(Hash)}.each do |server|
+      if hash[cluster][server]["server_connections"].to_i <= 0
+        errors[server] = 1
+        error_clusters[cluster] = 1
+      end
+    end
+  end
+
+  if error_clusters.empty?
+    exit 0
+  else
+    puts \
+      "error with redis cluster [#{error_clusters.keys.join(%Q[,])}] " \
+      "problem shards: #{errors.keys.join(%Q[,])}"
+  end
+'`
+
+
+if [ -z "$OUTPUT" ];  then
+  result "OK" $STATE_OK
+else
+  PROBLEM="$OUTPUT"
+  result "CRITICAL" $STATE_CRITICAL
+fi
