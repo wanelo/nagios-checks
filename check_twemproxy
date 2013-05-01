@@ -59,6 +59,7 @@ fi
 
 
 OUTPUT=`nc $HOST $PORT | ruby -e '
+  require "rubygems"
   require "json"
   hash = JSON.parse(STDIN.read)
   errors = {}
