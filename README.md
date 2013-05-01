@@ -62,3 +62,15 @@ Usage: ./check_twemproxy [-h host] [-p port]
 ```
 
 Dependencies: ruby with JSON parser installed.
+
+Example:
+
+```
+check_twemproxy --host  192.168.10.100
+TWEMPROXY CRITICAL : 192.168.10.100 error with redis cluster [twitter_feed] problem shards: shard003,shard006
+```
+
+```
+check_twemproxy --host  192.168.10.100
+TWEMPROXY OK
+```
