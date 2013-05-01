@@ -4,9 +4,12 @@
 #
 # (c) Wanelo Inc, Distributed under Apache License
 #
-# Usage: ./twemproxy_status [-h host] [-p port]
+# Usage: ./check_twemproxy [-h host] [-p port]
 #
 # Dependencies: ruby with JSON parser installed.
+#
+# Returns OK/SUCCESS when all servers in the sharded cluster are connected, or
+# CRITICAL otherwise.
 # ========================================================================================
 
 # Nagios return codes

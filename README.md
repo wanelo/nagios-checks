@@ -51,3 +51,14 @@ Usage: ./check_postgres_replication [ options ]
 
 Note that `--units` is only used in the response. No math is done to translate `--warning` or `--critical`,
 which should be set as bytes. Thus, a 20MB warning would be set as 20971520.
+
+check_twemproxy
+---------------
+Nagios check that utilizes twemproxy status page, and returns OK/SUCCESS when all backend servers
+in the sharded cluster are connected, or CRITICAL otherwise.
+
+```
+Usage: ./check_twemproxy [-h host] [-p port]
+```
+
+Dependencies: ruby with JSON parser installed.
