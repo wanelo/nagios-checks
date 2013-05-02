@@ -80,7 +80,7 @@ OUTPUT=`nc $HOST $PORT | ruby -e '
       "error with redis cluster [#{error_clusters.keys.join(%Q[,])}] " \
       "problem shards: #{errors.keys.join(%Q[,])}"
   end
-'`
+' 2>&1 `
 
 
 if [ -z "$OUTPUT" ];  then
