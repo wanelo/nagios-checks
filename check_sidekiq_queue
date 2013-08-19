@@ -4,8 +4,14 @@
 #
 # (c) Wanelo Inc, Distributed under Apache License
 #
-# Usage: ./check_sidekiq_queue [-h host] [-a password] [-q queue] [-n namespace] [-d db] [-w warn_perc] [-c critical_perc]
+# Usage:
+# To check a regular queue:
+#        ./check_sidekiq_queue [ -h <host> ] [ -a <password> ] [ -q <default> ] [ <-n mq> ] [ -d <redis-db> ] [-w <warn_perc>] [-c <critical_perc>]
 # Eg:    ./check_sidekiq_queue -w 500 -c 2000   # warning at 500 or higher used, critical at 2000 or higher
+#
+# To check schedule or retry (system) queue:
+#        ./check_sidekiq_queue [ -h <host> ] [ -a <password> ] [ -s <schedule|retry> ] [ <-n mq> ] [ -d <redis-db> ] [-w <warn_perc>] [-c <critical_perc>]
+#
 # ========================================================================================
 
 # Nagios return codes
@@ -17,6 +23,7 @@ STATE_UNKNOWN=3
 WARNING_THRESHOLD=500
 CRITICAL_THRESHOLD=1000
 QUEUE="default"
+SYSTEM=""
 NAMESPACE=""
 HOST="127.0.0.1"
 PASS=""
@@ -33,6 +40,10 @@ while [ $# -gt 0 ]; do
                 shift
                 HOST=$1
                 ;;
+        -a | --password)
+                shift
+                PASS=$1
+                ;;
         -q | --queue)
                 shift
                 QUEUE=$1
@@ -41,13 +52,13 @@ while [ $# -gt 0 ]; do
                 shift
                 NAMESPACE=$1
                 ;;
+        -s | --system)
+                shift
+                SYSTEM=$1
+                ;;
         -w | --warning)
                 shift
                 WARNING_THRESHOLD=$1
-                ;;
-        -a | --password)
-                shift
-                PASS=$1
                 ;;
         -c | --critical)
                 shift
@@ -63,32 +74,40 @@ done
 PATH=/opt/local/bin:$PATH
 NODENAME=$HOSTNAME
 
+ERR=/tmp/redis-cli.error.$$
+rm -f $ERR
+
 function result {
   DESCRIPTION=$1
   STATUS=$2
   echo "SIDEKIQ $DESCRIPTION : ${NODENAME} ${QUEUE_SIZE} on ${QUEUE}|sidekiq_queue_${QUEUE}=${QUEUE_SIZE};${WARNING_THRESHOLD};${CRITICAL_THRESHOLD}"
+  rm -f $ERR
   exit $STATUS
 }
 
-ERR=/tmp/redis-cli.error.$$
+if [ "$QUEUE" != "default" -a -n "$SYSTEM" ]; then
+  result "CRITICAL invalid usage: pass -q or -s but not both", $STATE_CRITICAL
+fi
 
+if [ -n "$SYSTEM" -a "$SYSTEM" != "schedule" -a "$SYSTEM" != "retry" ] ; then
+  result "CRITICAL invalid usage: -s expect one of schedule or retry", $STATE_CRITICAL
+fi
 
 if [ ! -z "$PASS"  ]; then
   PASS="-a $PASS"
 fi
 
-if [ ! -z "$NAMESPACE"  ]; then
- NAMESPACE="$NAMESPACE:"
+if [ -n "$SYSTEM" ]; then
+  QUEUE_SIZE=`redis-cli -h $HOST $PASS -n $DB zcard $NAMESPACE:$SYSTEM 2>$ERR | cut -d " " -f 1`
+  QUEUE=$SYSTEM
+else
+  QUEUE_SIZE=`redis-cli -h $HOST $PASS -n $DB llen $NAMESPACE:queue:$QUEUE 2>$ERR | cut -d " " -f 1`
 fi
-
-QUEUE_SIZE=`redis-cli -h $HOST $PASS -n $DB llen ${NAMESPACE}queue:$QUEUE 2>$ERR | cut -d " " -f 1`
 
 if [ -s "$ERR" ];  then
   QUEUE_SIZE=`cat $ERR`
-  rm -f $ERR
   result "CRITICAL" $STATE_CRITICAL
 fi
-rm -f $ERR
 
 if [ $QUEUE_SIZE -ge $WARNING_THRESHOLD ] && [ $QUEUE_SIZE -lt $CRITICAL_THRESHOLD ]; then
   result "WARNING" $STATE_WARNING
@@ -97,3 +116,6 @@ elif [ $QUEUE_SIZE -ge $CRITICAL_THRESHOLD ]; then
 else
   result "OK" $STATE_OK
 fi
+
+# ensure that output from stderr is cleaned up
+rm -f $ERR
