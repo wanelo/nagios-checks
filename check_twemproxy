@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env ruby
 # ========================================================================================
 # Twemproxy Status Check using JSON status page
 #
@@ -12,80 +12,74 @@
 # CRITICAL otherwise.
 # ========================================================================================
 
+require 'optparse'
+require 'json'
+
 # Nagios return codes
 STATE_OK=0
 STATE_WARNING=1
 STATE_CRITICAL=2
 STATE_UNKNOWN=3
 
-HOST=""
-PORT=22222
-DESCRIPTION=""
-PROBLEM=
+options = Struct.new('Options', :host, :port).new
+options.port = 22222
 
-# Parse parameters
-while [ $# -gt 0 ]; do
-    case "$1" in
-        -h | --host)
-                shift
-                HOST=$1
-                ;;
-        -q | --port)
-                shift
-                PORT=$1
-                ;;
-        *)  echo "Unknown argument: $1"
-            exit $STATE_UNKNOWN
-            ;;
-        esac
-shift
-done
+optparse = OptionParser.new do |opts|
+  opts.banner = "Usage: check_twemproxy [-h host] [-p port]"
 
-PATH=/opt/local/bin:$PATH
-NODENAME=$HOSTNAME
-
-function result {
-  DESCRIPTION=$1
-  STATUS=$2
-  echo "TWEMPROXY $DESCRIPTION : ${HOST} ${PROBLEM}"
-  exit $STATUS
-}
-
-
-if [ -z "$HOST" ];  then
-  echo "ERROR: host is required"
-  exit 1
-fi
-
-
-OUTPUT=`nc $HOST $PORT | ruby -e '
-  require "rubygems"
-  require "json"
-  hash = JSON.parse(STDIN.read)
-  errors = {}
-  error_clusters = {}
-  hash.keys.find_all{|k| hash[k].is_a?(Hash)}.each do |cluster|
-    hash[cluster].keys.find_all{|v| hash[cluster][v].is_a?(Hash)}.each do |server|
-      if hash[cluster][server]["server_connections"].to_i <= 0
-        errors[server] = 1
-        error_clusters[cluster] = 1
-      end
-    end
+  opts.on("-h", "--host HOST", String, "Host name or IP address") do |h|
+    options.host = h
   end
 
-  if error_clusters.empty?
-    exit 0
-  else
-    puts \
-      "error with redis cluster [#{error_clusters.keys.join(%Q[,])}] " \
-      "problem shards: #{errors.keys.join(%Q[,])}"
+  opts.on("-p", "--port PORT", Integer, "Port") do |p|
+    options.port = p
   end
-' 2>&1 `
 
+  opts.on('-?', '--help', 'Display this screen') do
+    puts opts
+    exit
+  end
+end
 
-if [ -z "$OUTPUT" ];  then
-  result "OK" $STATE_OK
+begin
+  optparse.parse!
+  raise OptionParser::MissingArgument.new("host is required") unless options.host
+rescue OptionParser::InvalidOption, OptionParser::MissingArgument => e
+  puts e.message
+  puts optparse
+  exit STATE_UNKNOWN
+end
+
+NODENAME=`hostname`
+
+firstrun = JSON.parse(`nc #{options.host} #{options.port}`)
+sleep 2
+secondrun = JSON.parse(`nc #{options.host} #{options.port}`)
+
+errors = {}
+error_clusters = {}
+secondrun.keys.find_all{|k| secondrun[k].is_a?(Hash)}.each do |cluster|
+  secondrun[cluster].keys.find_all{|v| secondrun[cluster][v].is_a?(Hash)}.each do |server|
+    next if secondrun[cluster][server]["server_connections"].to_i > 0
+    next if secondrun[cluster][server]["requests"].to_i - firstrun[cluster][server]["requests"].to_i == 0
+
+    errors[server] = 1
+    error_clusters[cluster] = 1
+  end
+end
+
+unless error_clusters.empty?
+  problem = <<-END
+    error with redis cluster [#{error_clusters.keys.join(",")}]
+    problem shards: #{errors.keys.join(",")}
+  END
+end
+
+if problem.nil?
+  puts "TWEMPROXY OK : #{options.host}"
+  exit STATE_OK
 else
-  PROBLEM="$OUTPUT"
-  result "CRITICAL" $STATE_CRITICAL
-fi
+  puts "TWEMPROXY CRITICAL : #{options.host} #{problem}"
+  exit STATE_CRITICAL
+end
+
