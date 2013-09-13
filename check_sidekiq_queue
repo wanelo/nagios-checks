@@ -97,11 +97,15 @@ if [ ! -z "$PASS"  ]; then
   PASS="-a $PASS"
 fi
 
+if [ ! -z "$NAMESPACE"  ]; then
+ NAMESPACE="$NAMESPACE:"
+fi
+
 if [ -n "$SYSTEM" ]; then
-  QUEUE_SIZE=`redis-cli -h $HOST $PASS -n $DB zcard $NAMESPACE:$SYSTEM 2>$ERR | cut -d " " -f 1`
+  QUEUE_SIZE=`redis-cli -h $HOST $PASS -n $DB zcard ${NAMESPACE}$SYSTEM 2>$ERR | cut -d " " -f 1`
   QUEUE=$SYSTEM
 else
-  QUEUE_SIZE=`redis-cli -h $HOST $PASS -n $DB llen $NAMESPACE:queue:$QUEUE 2>$ERR | cut -d " " -f 1`
+  QUEUE_SIZE=`redis-cli -h $HOST $PASS -n $DB llen ${NAMESPACE}queue:$QUEUE 2>$ERR | cut -d " " -f 1`
 fi
 
 if [ -s "$ERR" ];  then
