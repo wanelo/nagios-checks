@@ -16,139 +16,214 @@
 # ========================================================================================
 
 # Nagios return codes
-STATE_OK=0
-STATE_WARNING=1
-STATE_CRITICAL=2
-STATE_UNKNOWN=3
+readonly STATE_OK=0
+readonly STATE_WARNING=1
+readonly STATE_CRITICAL=2
+readonly STATE_UNKNOWN=3
+
+readonly ARGS="$@"
 
 # set thresholds in bytes
-WARNING_THRESHOLD=10485760
-CRITICAL_THRESHOLD=15728640
+readonly DEFAULT_WARNING_THRESHOLD=10485760
+readonly DEFAULT_CRITICAL_THRESHOLD=15728640
 
-HOST="127.0.0.1"
-USER=postgres
-UNITS=MB
-# Parse parameters
-while [ $# -gt 0 ]; do
-    case "$1" in
-        -h | --host)
-                shift
-                HOST=$1
-                ;;
-        -m | --master)
-                shift
-                MASTER=$1
-                ;;
-        -U | --user)
-                shift
-                USER=$1
-                ;;
-        -x | --units)
-                shift
-                UNITS=$1
-                ;;
-        -w | --warning)
-                shift
-                WARNING_THRESHOLD=$1
-                ;;
-        -c | --critical)
-                shift
-                CRITICAL_THRESHOLD=$1
-                ;;
-        *)  echo "Unknown argument: $1"
-            exit $STATE_UNKNOWN
-            ;;
-        esac
-shift
-done
+readonly DEFAULT_HOST="127.0.0.1"
+readonly DEFAULT_USER=postgres
+readonly DEFAULT_UNITS=MB
 
-if [ -z "$MASTER" ]; then
-  echo "pass master host in parameters via -m flag"
-  exit 1
-fi
+readonly PATH=/opt/local/bin:${PATH}
+readonly NODENAME=$(cat /etc/nodename)
+readonly MASTER_SQL="SELECT pg_current_xlog_location()"
+readonly REPLICA_SQL="SELECT pg_last_xlog_replay_location()"
+readonly REPLICA_TIME_LAG="select now() - pg_last_xact_replay_timestamp()"
+readonly ERR=/tmp/repl_chec.$$
 
-# Error checking of arguments
-case "$UNITS" in
-    KB)
-        DIVISOR=1024
-        ;;
-    MB)
-        DIVISOR=1048576
-        ;;
-    *)
-        check_errors 1 "Incorrect unit of measurement"
-        ;;
-    esac
+usage() {
+  cat <<-EOF
+Usage: ./check_postgres_replication [ -h <host> ] [ -m <master> ] [ -U user ] [ -x <units> ]
+                                    [-w <warn_perc>] [-c <critical_perc>]
+   -h   --host       replica host (default 127.0.0.1)
+   -m   --master     master fqdn or ip (required)
+   -U   --user       database user (default postgres)
+   -x   --units      units of measurement to display (KB or MB, default MB)
+   -w   --warning    warning threshold (default 10MB)
+   -c   --critical   critical threshold (default 15MB)
 
-
-PATH=/opt/local/bin:$PATH
-NODENAME=`cat /etc/nodename`
-MASTER_SQL="SELECT pg_current_xlog_location()"
-REPLICA_SQL="SELECT pg_last_xlog_replay_location()"
-ERR=/tmp/repl_chec.$$
-
-function result {
-  DESCRIPTION=$1
-  STATUS=$2
-
-  ERROR=`cat $ERR 2>/dev/null`
-
-  if [[ "$STATUS" -eq "$STATE_CRITICAL" && ! -z "$ERROR" ]]; then
-    MESSAGE="replication check error $ERROR"
-  else
-    DIFF_UNITS=$(diff)
-    MESSAGE="replication lag is ${DIFF_UNITS}$UNITS"
-  fi
-  echo "REPLICATION $DESCRIPTION : ${NODENAME} $MESSAGE|repl=${DIFF};${WARNING_THRESHOLD};${CRITICAL_THRESHOLD}"
-  rm -f $ERR
-  exit $STATUS
+        --help       show this message
+        --verbose
+EOF
 }
 
-function check_errors {
+# Parse parameters
+parse_arguments() {
+  local arg=$1
+  for arg; do
+    local delim=""
+    case "$arg" in
+      --host)      args="${args}-h ";;
+      --master)    args="${args}-m ";;
+      --user)      args="${args}-U ";;
+      --units)     args="${args}-x ";;
+      --warning)   args="${args}-w ";;
+      --critical)  args="${args}-c ";;
+      --help)      args="${args}-H ";;
+      --verbose)   args="${args}-v ";;
+      *) [[ "${arg:0:1}" == "-" ]] || delim="\""
+          args="${args}${delim}${arg}${delim} ";;
+    esac
+  done
+
+  eval set -- $args
+
+  while getopts "h:m:U:x:w:c:Hv" OPTION
+  do
+    case $OPTION in
+    v)
+        set -x
+        ;;
+    H)
+        usage
+        exit
+        ;;
+    h)
+        local host=$OPTARG
+        ;;
+    m)
+        readonly MASTER=$OPTARG
+        ;;
+    U)
+        local user=$OPTARG
+        ;;
+    x)
+        local units=$OPTARG
+        ;;
+    w)
+        local warning_threshold=$OPTARG
+        ;;
+    c)
+        local critical_threshold=$OPTARG
+        ;;
+    esac
+  done
+
+  readonly USER=${user:-$DEFAULT_USER}
+  readonly HOST=${host:-$DEFAULT_HOST}
+  readonly UNITS=${units:-$DEFAULT_UNITS}
+  readonly WARNING_THRESHOLD=${warning_threshold:-$DEFAULT_WARNING_THRESHOLD}
+  readonly CRITICAL_THRESHOLD=${critical_threshold:-$DEFAULT_CRITICAL_THRESHOLD}
+}
+
+check_required_arguments() {
+  if [ -z "$MASTER" ]; then
+    echo "pass master host in parameters via -m flag"
+    exit 1
+  fi
+}
+
+normalize_units() {
+  # Error checking of arguments
+  case "$UNITS" in
+    KB)
+      readonly DIVISOR=1024
+      ;;
+    MB)
+      readonly DIVISOR=1048576
+      ;;
+    *)
+      echo "Incorrect unit of measurement"
+      usage
+      exit 1
+      ;;
+  esac
+}
+
+result() {
+  local description=$1
+  local status=$2
+  local diff=$3
+  local time_lag=$4
+
+  local error=$(cat $ERR 2>/dev/null)
+
+  if [[ "${status}" -eq "${STATE_CRITICAL}" && ! -z "${error}" ]]; then
+    local message="replication check error ${error}"
+  else
+    local diff_units=$(bytes_to_units $diff)
+    local message="replication lag is ${diff_units}${UNITS} : time lag is ${time_lag}"
+  fi
+  echo "REPLICATION $description : ${NODENAME} $message|repl=${diff},time_lag=${time_lag};${WARNING_THRESHOLD};${CRITICAL_THRESHOLD}"
+  rm -f $ERR
+  exit $status
+}
+
+get_replica_current_xlog() {
+  echo $(psql -U $USER -Atc "$REPLICA_SQL" -h $HOST 2>$ERR)
+}
+
+get_master_current_xlog() {
+  echo $(psql -U $USER -Atc "$MASTER_SQL" -h $MASTER 2>$ERR)
+}
+
+check_replica_time_lag() {
+  echo $(psql -U $USER -Atc "${REPLICA_TIME_LAG}" -h ${HOST} 2>${ERR})
+}
+
+check_errors() {
   if [ $1 -ne 0 ]; then
     result "CRITICAL" $STATE_CRITICAL
   fi
 }
 
-function xlog_to_bytes {
+xlog_to_bytes() {
   # http://eulerto.blogspot.com/2011/11/understanding-wal-nomenclature.html
-  logid="${1%%/*}"
-  offset="${1##*/}"
+  local logid="${1%%/*}"
+  local offset="${1##*/}"
   echo $((0xFF000000 * 0x$logid + 0x$offset))
 }
 
-function diff {
-  if [ -z "$DIFF" ]; then
+bytes_to_units() {
+  local diff=$1
+  if [ -z "$diff" ]; then
     echo "ERROR: NO DATA AVAILABLE"
   else
-    echo $(( $DIFF / $DIVISOR ))
+    echo $(( $diff / $DIVISOR ))
   fi
 }
 
-REPLICA_XLOG=$(psql -U $USER -Atc "$REPLICA_SQL" -h $HOST 2>$ERR)
-check_errors $?
-REPLICA_BYTES=$(xlog_to_bytes $REPLICA_XLOG)
+main() {
+  parse_arguments $ARGS
+  check_required_arguments
+  normalize_units
 
-if [ -z "$REPLICA_XLOG" ]; then
-  echo -n "Unable to find replica XLOG replay location" > $ERR
-  result "CRITICAL" $STATE_CRITICAL
-fi
+  local replica_xlog=$(get_replica_current_xlog)
+  check_errors $?
+  local replica_bytes=$(xlog_to_bytes ${replica_xlog})
 
-# Query master and replica for latest xlog
-MASTER_XLOG=$(psql -U $USER -Atc "$MASTER_SQL" -h $MASTER 2>$ERR)
-check_errors $?
-MASTER_BYTES=$(xlog_to_bytes $MASTER_XLOG)
+  if [ -z "${replica_xlog}" ]; then
+    echo -n "Unable to find replica XLOG replay location" > $ERR
+    result "CRITICAL" $STATE_CRITICAL
+  fi
 
-# Calculate xlog diff in bytes
-DIFF=$(($MASTER_BYTES - $REPLICA_BYTES))
+  # Query master and replica for latest xlog
+  local master_xlog=$(get_master_current_xlog)
+  check_errors $?
+  local master_bytes=$(xlog_to_bytes $master_xlog)
 
-# Output response
-if [ $DIFF -ge $WARNING_THRESHOLD ] && [ $DIFF -lt $CRITICAL_THRESHOLD ]; then
-  result "WARNING" $STATE_WARNING
-elif [ $DIFF -ge $CRITICAL_THRESHOLD ]; then
-  result "CRITICAL" $STATE_CRITICAL
-else
-  result "OK" $STATE_OK
-fi
+  # Calculate xlog diff in bytes
+  local diff=$(($master_bytes - $replica_bytes))
 
-rm -f $ERR
+  local time_lag=$(check_replica_time_lag)
+
+  # Output response
+  if [ $diff -ge $WARNING_THRESHOLD ] && [ $diff -lt $CRITICAL_THRESHOLD ]; then
+    result "WARNING" $STATE_WARNING $diff $time_lag
+  elif [ $diff -ge $CRITICAL_THRESHOLD ]; then
+    result "CRITICAL" $STATE_CRITICAL $diff $time_lag
+  else
+    result "OK" $STATE_OK $diff $time_lag
+  fi
+
+  rm -f $ERR
+}
+
+main
