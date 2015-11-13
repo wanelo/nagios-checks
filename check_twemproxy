@@ -4,7 +4,7 @@
 #
 # (c) Wanelo Inc, Distributed under Apache License
 #
-# Usage: ./check_twemproxy [-h host] [-p port]
+# Usage: ./check_twemproxy [-H host] [-p port]
 #
 # Dependencies: ruby with JSON parser installed.
 #
@@ -15,24 +15,36 @@
 require 'optparse'
 require 'json'
 
-# Nagios return codes
-STATE_OK=0
-STATE_WARNING=1
-STATE_CRITICAL=2
-STATE_UNKNOWN=3
+DEFAULT_PORT = 22222
+DEFAULT_WARNING_THRESHOLD = 0
+DEFAULT_CRITICAL_THRESHOLD = 10
 
-options = Struct.new('Options', :host, :port).new
-options.port = 22222
+options = Struct.new('Options', :host, :port, :verbose, :warning_threshold, :critical_threshold).new
+options.port = DEFAULT_PORT
+options.warning_threshold = DEFAULT_WARNING_THRESHOLD
+options.critical_threshold = DEFAULT_CRITICAL_THRESHOLD
 
 optparse = OptionParser.new do |opts|
-  opts.banner = "Usage: check_twemproxy [-h host] [-p port]"
+  opts.banner = 'Usage: check_twemproxy [-h host] [-p port]'
 
-  opts.on("-h", "--host HOST", String, "Host name or IP address") do |h|
+  opts.on('-H', '--host HOST', String, 'Host name or IP address') do |h|
     options.host = h
   end
 
-  opts.on("-p", "--port PORT", Integer, "Port") do |p|
+  opts.on('-p', '--port PORT', Integer, "Port (#{DEFAULT_PORT})") do |p|
     options.port = p
+  end
+
+  opts.on('-w', '--warning COUNT', Integer, "Warning threshold for server problems (#{DEFAULT_WARNING_THRESHOLD})") do |w|
+    options.warning_threshold = w
+  end
+
+  opts.on('-c', '--critical COUNT', Integer, "Critical threshold for server problems (#{DEFAULT_CRITICAL_THRESHOLD})") do |w|
+    options.critical_threshold = w
+  end
+
+  opts.on('-v', '--verbose', 'Run verbosely') do |p|
+    options.verbose = true
   end
 
   opts.on('-?', '--help', 'Display this screen') do
@@ -43,43 +55,162 @@ end
 
 begin
   optparse.parse!
-  raise OptionParser::MissingArgument.new("host is required") unless options.host
+  raise OptionParser::MissingArgument.new('host is required') unless options.host
 rescue OptionParser::InvalidOption, OptionParser::MissingArgument => e
   puts e.message
   puts optparse
-  exit STATE_UNKNOWN
+  exit 3
 end
 
-NODENAME=`hostname`
+class TwemproxyCheck
+  STATE_OK=0
+  STATE_WARNING=1
+  STATE_CRITICAL=2
+  STATE_UNKNOWN=3
 
-firstrun = JSON.parse(`nc #{options.host} #{options.port}`)
-sleep 2
-secondrun = JSON.parse(`nc #{options.host} #{options.port}`)
+  LAST_CHECK_PATTERN = '/tmp/twemproxy-%s'
 
-errors = {}
-error_clusters = {}
-secondrun.keys.find_all{|k| secondrun[k].is_a?(Hash)}.each do |cluster|
-  secondrun[cluster].keys.find_all{|v| secondrun[cluster][v].is_a?(Hash)}.each do |server|
-    next if secondrun[cluster][server]["server_connections"].to_i > 0
-    next if secondrun[cluster][server]["requests"].to_i - firstrun[cluster][server]["requests"].to_i == 0
+  attr_accessor :disconnect_count, :error_clusters, :disconnected_servers, :options, :timeout_count, :timedout_servers
 
-    errors[server] = 1
-    error_clusters[cluster] = 1
+  def initialize(options)
+    @options = options
+    @disconnect_count = 0
+    @error_clusters = Hash.new(0)
+    @disconnected_servers = Hash.new(0)
+    @timeout_count = 0
+    @timedout_servers = Hash.new(0)
+  end
+
+  def check!
+    begin
+      check_twemproxy!
+      persist!
+      exit!
+    rescue => e
+      unknown!(e)
+    end
+  end
+
+  protected
+
+  def check_twemproxy!
+    return if last_check_data.nil?
+
+    check_data.keys.find_all { |k| check_data[k].is_a?(Hash) }.each do |cluster|
+      check_data[cluster].keys.find_all { |v| check_data[cluster][v].is_a?(Hash) }.each do |server|
+        check_timeouts!(cluster, server)
+        next if connections_ok?(cluster, server)
+        next if no_new_requests?(cluster, server)
+
+        self.disconnect_count += 1
+        self.disconnected_servers[server] += 1
+        self.error_clusters[cluster] += 1
+      end
+    end
+  end
+
+  def persist!
+    ::File.open(last_check_filename, 'w') do |file|
+      file.write(JSON.dump(check_data))
+    end
+  end
+
+  def exit!
+    return critical! if critical?
+    return warning! if warning?
+    ok!
+  end
+
+  private
+
+  def connections_ok?(cluster, server)
+    check_data[cluster][server]['server_connections'].to_i > 0
+  end
+
+  def no_new_requests?(cluster, server)
+    check_data[cluster][server]['requests'].to_i - last_check_data[cluster][server]['requests'].to_i <= 0
+  end
+
+  def timeouts_for(cluster, server)
+    check_data[cluster][server]['server_timedout'].to_i - last_check_data[cluster][server]['server_timedout'].to_i
+  end
+
+  def check_timeouts!(cluster, server)
+    return if timeouts_for(cluster, server) == 0
+    self.timeout_count += 1
+    self.error_clusters[cluster] += 1
+    self.timedout_servers[server] += 1
+  end
+
+  def check_data
+    @check_data ||= JSON.parse(`nc #{options.host} #{options.port}`)
+  end
+
+  def last_check_data
+    @last_check_data ||= begin
+      return nil unless ::File.exist?(last_check_filename)
+      return nil if ::File.ctime(last_check_filename) < Time.now - (5 * 60)
+      JSON.parse(::File.read(last_check_filename))
+    end
+  end
+
+  def last_check_filename
+    LAST_CHECK_PATTERN % options.host
+  end
+
+  def ok?
+    !critical? && !warning?
+  end
+
+  def critical?
+    disconnect_count > options.critical_threshold
+  end
+
+  def warning?
+    disconnect_count > options.warning_threshold
+  end
+
+  def ok!
+    puts "TWEMPROXY OK : #{message}"
+    dump_data
+    exit STATE_OK
+  end
+
+  def critical!
+    puts "TWEMPROXY CRITICAL : #{message}"
+    dump_data
+    exit STATE_CRITICAL
+  end
+
+  def warning!
+    puts "TWEMPROXY WARNING : #{message}"
+    dump_data
+    exit STATE_WARNING
+  end
+
+  def unknown!(e)
+    puts "TWEMPROXY UNKNOWN : #{e.message}"
+    exit STATE_UNKNOWN
+  end
+
+  def message
+    return options.host if ok?
+    "servers: #{disconnected_servers.keys.join(',')}, clusters: #{error_clusters.keys.join(',')} | " \
+    "disconnects=#{disconnect_count};" \
+    "timeouts=#{timeout_count};" \
+    "clusters=[#{error_clusters.keys.join(',')}];" \
+    "disconnected_shards=#{disconnected_servers.keys.join(',')};" \
+    "timedout_shards=#{timedout_servers.keys.join(',')}"
+  end
+
+  def dump_data
+    return unless options.verbose
+    check_data.keys.find_all { |k| check_data[k].is_a?(Hash) }.each do |cluster|
+      check_data[cluster].keys.find_all { |v| check_data[cluster][v].is_a?(Hash) }.each do |server|
+        puts "#{cluster}/#{server}: #{check_data[cluster][server].to_s}"
+      end
+    end
   end
 end
 
-unless error_clusters.empty?
-  problem = <<-END
-    error with redis cluster [#{error_clusters.keys.join(",")}]
-    problem shards: #{errors.keys.join(",")}
-  END
-end
-
-if problem.nil?
-  puts "TWEMPROXY OK : #{options.host}"
-  exit STATE_OK
-else
-  puts "TWEMPROXY CRITICAL : #{options.host} #{problem}"
-  exit STATE_CRITICAL
-end
-
+TwemproxyCheck.new(options).check!
