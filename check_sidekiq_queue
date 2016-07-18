@@ -26,6 +26,7 @@ QUEUE="default"
 SYSTEM=""
 NAMESPACE=""
 HOST="127.0.0.1"
+PORT="6379"
 PASS=""
 DB=0
 
@@ -39,6 +40,10 @@ while [ $# -gt 0 ]; do
         -h | --hostname)
                 shift
                 HOST=$1
+                ;;
+        -p | --port)
+                shift
+                PORT=$1
                 ;;
         -a | --password)
                 shift
@@ -85,6 +90,10 @@ function result {
   exit $STATUS
 }
 
+if [ ! `command -v redis-cli` ]; then
+  result "UNKNOWN redis-cli not found in path.", $STATE_UNKNOWN
+fi
+
 if [ "$QUEUE" != "default" -a -n "$SYSTEM" ]; then
   result "CRITICAL invalid usage: pass -q or -s but not both", $STATE_CRITICAL
 fi
@@ -93,19 +102,19 @@ if [ -n "$SYSTEM" -a "$SYSTEM" != "schedule" -a "$SYSTEM" != "retry" ] ; then
   result "CRITICAL invalid usage: -s expect one of schedule or retry", $STATE_CRITICAL
 fi
 
-if [ ! -z "$PASS"  ]; then
+if [ ! -z "$PASS" ]; then
   PASS="-a $PASS"
 fi
 
-if [ ! -z "$NAMESPACE"  ]; then
+if [ ! -z "$NAMESPACE" ]; then
  NAMESPACE="$NAMESPACE:"
 fi
 
 if [ -n "$SYSTEM" ]; then
-  QUEUE_SIZE=`redis-cli -h $HOST $PASS -n $DB zcard ${NAMESPACE}$SYSTEM 2>$ERR | cut -d " " -f 1`
+  QUEUE_SIZE=`redis-cli -h $HOST -p $PORT $PASS -n $DB zcard ${NAMESPACE}$SYSTEM 2>$ERR | cut -d " " -f 1`
   QUEUE=$SYSTEM
 else
-  QUEUE_SIZE=`redis-cli -h $HOST $PASS -n $DB llen ${NAMESPACE}queue:$QUEUE 2>$ERR | cut -d " " -f 1`
+  QUEUE_SIZE=`redis-cli -h $HOST -p $PORT $PASS -n $DB llen ${NAMESPACE}queue:$QUEUE 2>$ERR | cut -d " " -f 1`
 fi
 
 if [ -s "$ERR" ];  then
