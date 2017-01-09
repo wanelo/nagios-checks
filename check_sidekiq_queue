@@ -6,11 +6,11 @@
 #
 # Usage:
 # To check a regular queue:
-#        ./check_sidekiq_queue [ -h <host> ] [ -a <password> ] [ -q <default> ] [ <-n mq> ] [ -d <redis-db> ] [-w <warn_perc>] [-c <critical_perc>]
+#        ./check_sidekiq_queue [ -h <host> ] [ -p <port> ] [ -a <password> ] [ -q <default> ] [ <-n mq> ] [ -d <redis-db> ] [-w <warn_perc>] [-c <critical_perc>]
 # Eg:    ./check_sidekiq_queue -w 500 -c 2000   # warning at 500 or higher used, critical at 2000 or higher
 #
 # To check schedule or retry (system) queue:
-#        ./check_sidekiq_queue [ -h <host> ] [ -a <password> ] [ -s <schedule|retry> ] [ <-n mq> ] [ -d <redis-db> ] [-w <warn_perc>] [-c <critical_perc>]
+#        ./check_sidekiq_queue [ -h <host> ] [ -p <port> ] [ -a <password> ] [ -s <schedule|retry> ] [ <-n mq> ] [ -d <redis-db> ] [-w <warn_perc>] [-c <critical_perc>]
 #
 # ========================================================================================
 
@@ -26,6 +26,7 @@ QUEUE="default"
 SYSTEM=""
 NAMESPACE=""
 HOST="127.0.0.1"
+PORT="6379"
 PASS=""
 DB=0
 
@@ -40,6 +41,10 @@ while [ $# -gt 0 ]; do
                 shift
                 HOST=$1
                 ;;
+	-p | --port)
+		shift
+		PORT=$1
+		;;
         -a | --password)
                 shift
                 PASS=$1
@@ -102,10 +107,10 @@ if [ ! -z "$NAMESPACE"  ]; then
 fi
 
 if [ -n "$SYSTEM" ]; then
-  QUEUE_SIZE=`redis-cli -h $HOST $PASS -n $DB zcard ${NAMESPACE}$SYSTEM 2>$ERR | cut -d " " -f 1`
+  QUEUE_SIZE=`redis-cli -h $HOST -p $PORT $PASS -n $DB zcard ${NAMESPACE}$SYSTEM 2>$ERR | cut -d " " -f 1`
   QUEUE=$SYSTEM
 else
-  QUEUE_SIZE=`redis-cli -h $HOST $PASS -n $DB llen ${NAMESPACE}queue:$QUEUE 2>$ERR | cut -d " " -f 1`
+  QUEUE_SIZE=`redis-cli -h $HOST -p $PORT $PASS -n $DB llen ${NAMESPACE}queue:$QUEUE 2>$ERR | cut -d " " -f 1`
 fi
 
 if [ -s "$ERR" ];  then
