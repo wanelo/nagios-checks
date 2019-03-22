@@ -24,10 +24,10 @@ Peeks into the Sidekiq queue using redis-cli and validates the queue depth is wi
 
 Usage: 
 ```
-./check_sidekiq_queue [-h host] [-a password] ([-q queue] || [ -s retry|schedule ]) [-n namespace] [-d db] [-w warn_perc] [-c critical_perc]
+./check_sidekiq_queue [-h host] [-p <port> ] [-a password] ([-q queue] || [ -s retry|schedule ]) [-n namespace] [-d db] [-w warn_perc] [-c critical_perc] ([-i <ignore_queues>])
 ```
 
-Defaults: localhost, no password, default queue, no namespace, db=0, warning at 500, critical at 1000.
+Defaults: localhost, 6379, no password, default queue, no namespace, db=0, warning at 500, critical at 1000.
 
 ```
 ./check_sidekiq_queue -h 10.100.1.12 -q activity -w 200 -c 1000
@@ -36,6 +36,15 @@ SIDEKIQ OK : redis-host.prod 0 on activity|sidekiq_queue_activity=0;200;1000
 
 By passing -q flag you will be getting a size of a regular sidekiq queue, while passing -s flag allows checking the size of
 retry and schedule sidekiq system queues.
+
+To check for all sidekiq queues, -q flag can be set to 'all'. Thresholds will be compared for the largest queue from all the queues.
+To check for all sidekiq queues <b>except</b> a list of queues, -i can be passed. This option can only be used with -q flag equal to 'all'
+
+The following example checks threshold for the largest queue among all sidekiq queues except queues `monitor_queue` and `execute_queue`
+```
+./check_sidekiq_queue -h 10.100.1.12 -q all -i monitor_queue,execute_queue -w 200 -c 1000
+SIDEKIQ OK : redis-host.prod 86 on activity|sidekiq_queue_activity=0;200;1000
+```
 
 check_postgres_replication
 --------------------------
