@@ -6,7 +6,7 @@
 #
 # Usage:
 # To check a regular queue:
-#        ./check_sidekiq_queue [ -h <host> ] [ -a <password> ] [ -q <default> ] [ <-n mq> ] [ -d <redis-db> ] [-w <warn_perc>] [-c <critical_perc>]
+#        ./check_sidekiq_queue [ -h <host> ] [-p <port> ] [ -a <password> ] [ -q <default> ] [ <-n mq> ] [ -d <redis-db> ] [-w <warn_perc>] [-c <critical_perc>] [-i <ignore_queues>]
 # Eg:    ./check_sidekiq_queue -w 500 -c 2000   # warning at 500 or higher used, critical at 2000 or higher
 #
 # To check schedule or retry (system) queue:
@@ -26,6 +26,7 @@ QUEUE="default"
 SYSTEM=""
 NAMESPACE=""
 HOST="127.0.0.1"
+PORT="6379"
 PASS=""
 DB=0
 
@@ -40,6 +41,10 @@ while [ $# -gt 0 ]; do
                 shift
                 HOST=$1
                 ;;
+        -p | --port)
+                shift
+                PORT=$1
+                ;;
         -a | --password)
                 shift
                 PASS=$1
@@ -47,6 +52,10 @@ while [ $# -gt 0 ]; do
         -q | --queue)
                 shift
                 QUEUE=$1
+                ;;
+        -i | --ignore_queues)
+                shift
+                IGNORE_QUEUES=$1
                 ;;
         -n | --namespace)
                 shift
@@ -89,6 +98,10 @@ if [ "$QUEUE" != "default" -a -n "$SYSTEM" ]; then
   result "CRITICAL invalid usage: pass -q or -s but not both", $STATE_CRITICAL
 fi
 
+if [ -n "$IGNORE_QUEUES" -a "$QUEUE" != "all" ]; then
+  result "CRITICAL invalid usage: ignore_queues can only be used with QUEUE = all as value", $STATE_CRITICAL
+fi
+
 if [ -n "$SYSTEM" -a "$SYSTEM" != "schedule" -a "$SYSTEM" != "retry" ] ; then
   result "CRITICAL invalid usage: -s expect one of schedule or retry", $STATE_CRITICAL
 fi
@@ -102,10 +115,22 @@ if [ ! -z "$NAMESPACE"  ]; then
 fi
 
 if [ -n "$SYSTEM" ]; then
-  QUEUE_SIZE=`redis-cli -h $HOST $PASS -n $DB zcard ${NAMESPACE}$SYSTEM 2>$ERR | cut -d " " -f 1`
+  QUEUE_SIZE=`redis-cli -h $HOST -p $PORT $PASS -n $DB zcard ${NAMESPACE}$SYSTEM 2>$ERR | cut -d " " -f 1`
   QUEUE=$SYSTEM
+elif [ "$QUEUE" == "all" ]; then
+  ALL_QUEUES=`redis-cli -h $HOST -p $PORT $PASS -n $DB smembers queues 2>$ERR`
+  QUEUE_SIZE=-1
+  QUEUE="none"
+  for EACH_QUEUE in $ALL_QUEUES; do
+    [[ "$IGNORE_QUEUES" == *"$EACH_QUEUE"* ]] && continue
+    THIS_QUEUE_SIZE=`redis-cli -h $HOST -p $PORT $PASS -n $DB llen ${NAMESPACE}queue:$EACH_QUEUE 2>$ERR | cut -d " " -f 1`
+    if [ "$THIS_QUEUE_SIZE" -gt "$QUEUE_SIZE" ]; then
+      QUEUE_SIZE=$THIS_QUEUE_SIZE
+      QUEUE=$EACH_QUEUE
+    fi
+  done
 else
-  QUEUE_SIZE=`redis-cli -h $HOST $PASS -n $DB llen ${NAMESPACE}queue:$QUEUE 2>$ERR | cut -d " " -f 1`
+  QUEUE_SIZE=`redis-cli -h $HOST -p $PORT $PASS -n $DB llen ${NAMESPACE}queue:$QUEUE 2>$ERR | cut -d " " -f 1`
 fi
 
 if [ -s "$ERR" ];  then
